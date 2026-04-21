@@ -84,4 +84,4 @@ class BaseTimeSeriesModel(ABC):
         rmse = s.get("rmse", float("inf"))
         mape = s.get("mape", float("inf"))
         mape = mape if not np.isnan(mape) else 100.0
-        return 0.4 * mae + 0.4 * rmse + 0.2 * (mape / 100)
+        return round(0.4 * mae + 0.4 * rmse + 0.2 * (mape / 100), 7)
