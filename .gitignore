@@ -1,14 +1,49 @@
+﻿# Virtual environments — NEVER commit these
+venv/
+.venv/
+env/
+.env/
+ENV/
+venv.bak/
+
+# Python cache
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
+
+# Build artifacts
 *.egg-info/
 dist/
 build/
+*.egg
+*.whl
+*.tar.gz
+
+# Test / coverage
 .pytest_cache/
 .coverage
 htmlcov/
-*.egg
-.env
-.venv
+test_results.txt
 
+# IDE
+.vscode/
+.idea/
+*.suo
+*.user
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Library runtime artifacts
 catboost_info/
+*.cbm
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Temp reports
+*_report.html
+quickstart_report.html
