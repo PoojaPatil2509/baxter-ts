@@ -96,7 +96,7 @@ class ReportGenerator:
             )
 
         best_name  = model._selector.best_model.name if model._selector else "N/A"
-        scores     = model._best_scores or {}
+        scores     = (model._best_scores_original or model._best_scores) if hasattr(model, "_best_scores_original") else (model._best_scores or {})
         anom_audit = model._anomaly_df_audit or {}
         now        = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
@@ -243,10 +243,11 @@ class ReportGenerator:
             if len(top):
                 trows = ""
                 for ts, r in top.iterrows():
+                    import math
                     sev = r["severity_label"]
-                    av  = round(float(r["actual"]), 4)
-                    pv  = round(float(r["predicted"]), 4)
-                    rv  = round(float(r["residual"]), 4)
+                    av  = round(float(r["actual"]),    4) if not (isinstance(r["actual"],    float) and math.isnan(r["actual"]))    else "—"
+                    pv  = round(float(r["predicted"]), 4) if not (isinstance(r["predicted"], float) and math.isnan(r["predicted"])) else "—"
+                    rv  = round(float(r["residual"]),  4) if not (isinstance(r["residual"],  float) and math.isnan(r["residual"]))  else "—"
                     trows += (
                         f"<tr><td>{ts}</td><td>{av}</td><td>{pv}</td>"
                         f"<td>{rv}</td>"
@@ -270,16 +271,25 @@ class ReportGenerator:
             else:
                 flat[section] = vals
         items = ""
-        for k, v in list(flat.items())[:30]:
+        count = 0
+        for k, v in flat.items():
+            if count >= 30:
+                break
+            if v is None or v == "" or v == [] or v == {}:
+                continue
+            if isinstance(v, (int, float)) and v == 0 and "found" not in k and "before" not in k:
+                continue
             if isinstance(v, list):
-                v = ", ".join(str(i) for i in v[:5])
+                v = ", ".join(str(i) for i in v[:5]) if v else ""
+                if not v:
+                    continue
             items += (
                 f"<div class='audit-item'>"
                 f"<div class='audit-key'>{k}</div>"
-                f"<div class='audit-val'>{v}</div></div>"
+                f"<div class='audit-val'>{str(v)}</div></div>"
             )
+            count += 1
         return f"<div class='card'><div class='audit-grid'>{items}</div></div>"
-
     # ------------------------------------------------------------------
     # HTML page wrapper
     # ------------------------------------------------------------------

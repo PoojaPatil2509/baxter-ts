@@ -105,6 +105,7 @@ class BAXModel:
         self._anomaly_df:   Optional[pd.DataFrame]     = None
         self._anomaly_df_audit: dict = {}
         self._best_scores:  dict = {}
+        self._best_scores_original: dict = {}
         self._bax_narrative: Optional[str] = None
         self._preprocessing_audit: dict = {}
         self._is_fitted: bool = False
@@ -192,14 +193,36 @@ class BAXModel:
         self._feature_cols = self._X_train.columns.tolist()
         self._log(f"      Train: {len(self._X_train)} rows  |  Test: {len(self._X_test)} rows")
 
+        # ── Inverse-transform y_test for original-scale metrics ──────
+        try:
+            y_test_original = self._scaler.inverse_transform_target(
+                self._y_test.values, target_col, self._df_processed
+            )
+        except Exception:
+            y_test_original = None
+
         # ── AutoML model competition ───────────────────────────────────
         self._log("[8/9] AutoML model competition (RF vs XGBoost vs CatBoost)...")
         self._selector = ModelSelector(n_cv_splits=self.n_cv_splits)
-        self._selector.fit(self._X_train, self._y_train, self._X_test, self._y_test)
+        self._selector.fit(
+            self._X_train, self._y_train,
+            self._X_test,  self._y_test,
+            y_test_original=y_test_original,
+        )
         self._best_scores = self._selector.best_model.test_scores_
+        self._best_scores_original = (
+            self._selector.best_model.test_scores_original_ or {}
+        )
 
         # Generate test predictions
         self._y_pred_test = self._selector.best_model.predict(self._X_test)
+
+        try:
+            self._y_pred_test_original = self._scaler.inverse_transform_target(
+                self._y_pred_test, target_col, self._df_processed
+            )
+        except Exception:
+            self._y_pred_test_original = self._y_pred_test
 
         # ── BAX explanation ────────────────────────────────────────────
         self._log("[9/9] Computing BAX explanation (SHAP)...")
@@ -209,13 +232,13 @@ class BAXModel:
         narrator = BAXNarrator()
         self._preprocessing_audit = {
             "column_handler": self._col_handler.audit,
-            "validator":   self._validator.audit,
-            "imputer":     self._imputer.audit,
-            "outlier":     self._outlier.audit,
-            "transformer": self._transformer.audit,
-            "scaler":      self._scaler.audit,
-            "feature_eng": self._feat_eng.audit,
-            "splitter":    self._splitter.audit,
+            "validator":      self._validator.audit,
+            "imputer":        self._imputer.audit,
+            "outlier":        self._outlier.audit,
+            "transformer":    self._transformer.audit,
+            "scaler":         self._scaler.audit,
+            "feature_eng":    self._feat_eng.audit,
+            "splitter":       self._splitter.audit,
         }
         self._bax_narrative = narrator.generate(
             feature_importance=self._explainer.feature_importance_,
@@ -223,15 +246,18 @@ class BAXModel:
             target_col=target_col,
             test_scores=self._best_scores,
             preprocessing_audit=self._preprocessing_audit,
+            original_scores=self._best_scores_original,
         )
+
+        display_scores = self._best_scores_original or self._best_scores
 
         self._is_fitted = True
         self._log("\n=== Pipeline complete ===")
         self._log(f"    Winner : {self._selector.best_model.name}")
-        self._log(f"    MAE    : {self._best_scores.get('mae')}")
-        self._log(f"    RMSE   : {self._best_scores.get('rmse')}")
-        self._log(f"    MAPE   : {self._best_scores.get('mape')}%")
-        self._log(f"    R²     : {self._best_scores.get('r2')}")
+        self._log(f"    MAE    : {display_scores.get('mae')}")
+        self._log(f"    RMSE   : {display_scores.get('rmse')}")
+        self._log(f"    MAPE   : {display_scores.get('mape')}%")
+        self._log(f"    R²     : {display_scores.get('r2')}")
         return self
 
     def predict(self, steps: int = 30) -> pd.DataFrame:

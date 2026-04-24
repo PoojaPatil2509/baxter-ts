@@ -1,6 +1,8 @@
 """
-AutoML model selector: trains all candidates, picks the winner by composite score.
-Uses walk-forward TimeSeriesSplit — zero data leakage.
+AutoML model selector.
+
+Fix v0.1.2:
+  - Accepts y_test_original so MAPE in scoreboard is on original scale
 """
 
 import pandas as pd
@@ -28,6 +30,7 @@ class ModelSelector:
         y_train: pd.Series,
         X_test: pd.DataFrame,
         y_test: pd.Series,
+        y_test_original: Optional[np.ndarray] = None,
     ) -> "ModelSelector":
         self.candidates = [RFModel(), XGBModel(), CatModel()]
 
@@ -39,39 +42,58 @@ class ModelSelector:
             print(f"  Training {model.name}...")
             try:
                 model.fit(X_train, y_train, cv_splits=cv_folds)
-                test_scores = model.score(X_test, y_test)
+
+                y_pred_scaled = model.predict(X_test)
+
+                # Pass original-scale arrays so MAPE is meaningful
+                y_pred_orig = y_pred_scaled  # core.py overrides with inverse-transform
+                test_scores = model.score(
+                    X_test, y_test,
+                    y_test_original=y_test_original,
+                    y_pred_original=y_pred_orig,
+                )
+
+                orig = model.test_scores_original_
+                display_mape = (
+                    orig.get("mape", test_scores.get("mape"))
+                    if orig else test_scores.get("mape")
+                )
+
                 row = {
-                    "model": model.name,
+                    "model":           model.name,
                     **model.cv_scores_,
-                    **test_scores,
+                    "mae":             test_scores.get("mae"),
+                    "rmse":            test_scores.get("rmse"),
+                    "mape":            display_mape,
+                    "r2":              test_scores.get("r2"),
                     "composite_score": model.composite_score,
                 }
                 self.scoreboard.append(row)
             except Exception as e:
                 print(f"  {model.name} failed: {e}")
 
-        # Sort by composite score (lower = better)
         self.scoreboard.sort(key=lambda r: r["composite_score"])
 
         if not self.scoreboard:
             raise RuntimeError(
-                "All models failed during training. This usually means the "
-                "feature matrix contains non-numeric values. Check that all "
-                "columns are numeric or that you passed date_col correctly."
+                "All models failed. Check that all columns are numeric "
+                "and date_col is set correctly."
             )
 
-        # Pick winner
         best_name = self.scoreboard[0]["model"]
-        self.best_model = next(m for m in self.candidates if m.name == best_name)
+        self.best_model = next(
+            m for m in self.candidates if m.name == best_name
+        )
 
         self.audit = {
-            "winner": best_name,
-            "scoreboard": self.scoreboard,
-            "n_candidates": len(self.candidates),
+            "winner":        best_name,
+            "scoreboard":    self.scoreboard,
+            "n_candidates":  len(self.candidates),
             "failed_models": len(self.candidates) - len(self.scoreboard),
         }
 
-        print(f"\n  Winner: {best_name} (composite={self.scoreboard[0]['composite_score']:.4f})")
+        print(f"\n  Winner: {best_name} "
+              f"(composite={self.scoreboard[0]['composite_score']:.4f})")
         return self
 
     def scoreboard_df(self) -> pd.DataFrame:
