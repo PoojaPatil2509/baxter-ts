@@ -48,7 +48,11 @@ def _get_plotly_js_tag() -> str:
 
 class ReportGenerator:
     def __init__(self):
-        self.version = "0.1.0"
+        try:
+            import baxter_ts as _bt
+            self.version = _bt.__version__
+        except Exception:
+            self.version = "0.1.3"
 
     def generate(self, model: "BAXModel", output_path: str = "bax_report") -> str:
         from baxter_ts.visualization.plotter import BAXPlotter
@@ -273,20 +277,30 @@ class ReportGenerator:
         items = ""
         count = 0
         for k, v in flat.items():
-            if count >= 30:
+            if count >= 50:
                 break
+            # Skip genuinely empty values.
+            # IMPORTANT: check isinstance(v, bool) FIRST — in Python, bool is
+            # a subclass of int, so isinstance(False, (int,float)) is True and
+            # False == 0 is True. The old filter wrongly skipped
+            # was_stationary=False by treating it as numeric zero.
             if v is None or v == "" or v == [] or v == {}:
                 continue
-            if isinstance(v, (int, float)) and v == 0 and "found" not in k and "before" not in k:
-                continue
-            if isinstance(v, list):
-                v = ", ".join(str(i) for i in v[:5]) if v else ""
-                if not v:
+            if not isinstance(v, bool) and isinstance(v, (int, float)) and v == 0:
+                keep_keys = ("found", "before", "applied", "size",
+                             "rows", "pct", "after", "total")
+                if not any(kw in k for kw in keep_keys):
                     continue
+            if isinstance(v, list):
+                v_str = ", ".join(str(i) for i in v[:5]) if v else ""
+                if not v_str:
+                    continue
+                v = v_str
+            display_val = str(v)
             items += (
                 f"<div class='audit-item'>"
                 f"<div class='audit-key'>{k}</div>"
-                f"<div class='audit-val'>{str(v)}</div></div>"
+                f"<div class='audit-val'>{display_val}</div></div>"
             )
             count += 1
         return f"<div class='card'><div class='audit-grid'>{items}</div></div>"

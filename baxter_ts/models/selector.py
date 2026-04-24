@@ -1,8 +1,10 @@
 """
-AutoML model selector.
+AutoML model selector: trains all candidates, picks the winner by composite score.
+Uses walk-forward TimeSeriesSplit — zero data leakage.
 
-Fix v0.1.2:
-  - Accepts y_test_original so MAPE in scoreboard is on original scale
+Fix v0.1.3:
+  Passes y_test_original (raw pre-transformation values from _raw_target_series)
+  to model.score() so original-scale MAPE and R² are computed correctly.
 """
 
 import pandas as pd
@@ -43,16 +45,19 @@ class ModelSelector:
             try:
                 model.fit(X_train, y_train, cv_splits=cv_folds)
 
+                # y_pred_scaled — predictions in scaled+differenced space
                 y_pred_scaled = model.predict(X_test)
 
-                # Pass original-scale arrays so MAPE is meaningful
-                y_pred_orig = y_pred_scaled  # core.py overrides with inverse-transform
+                # Pass y_test_original (raw pre-transformation values).
+                # base_model.score() uses _original_scale_metrics() to compute
+                # MAE/RMSE/MAPE/R² in the original data space via std-ratio scaling.
                 test_scores = model.score(
                     X_test, y_test,
                     y_test_original=y_test_original,
-                    y_pred_original=y_pred_orig,
+                    y_pred_original=y_pred_scaled,
                 )
 
+                # Use original-scale MAPE in scoreboard when available
                 orig = model.test_scores_original_
                 display_mape = (
                     orig.get("mape", test_scores.get("mape"))

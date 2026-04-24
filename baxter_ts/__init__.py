@@ -15,5 +15,5 @@ Usage:
 
 from baxter_ts.core import BAXModel
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 __all__ = ["BAXModel"]

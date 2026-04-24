@@ -22,20 +22,20 @@ import numpy as np
 import pandas as pd
 from typing import Optional, List
 
-from baxter_ts.preprocessing.validator   import DatetimeValidator
-from baxter_ts.preprocessing.imputer     import TimeSeriesImputer
-from baxter_ts.preprocessing.outlier     import OutlierHandler
-from baxter_ts.preprocessing.transformer import StationarityTransformer
-from baxter_ts.preprocessing.scaler      import TimeSeriesScaler
-from baxter_ts.preprocessing.feature_eng import TimeSeriesFeatureEngineer
-from baxter_ts.preprocessing.splitter        import TemporalSplitter
-from baxter_ts.preprocessing.column_handler   import ColumnHandler
-from baxter_ts.models.selector           import ModelSelector
-from baxter_ts.bax.explainer             import BAXExplainer
-from baxter_ts.bax.narrator              import BAXNarrator
-from baxter_ts.anomaly.detector          import AnomalyDetector
-from baxter_ts.visualization.plotter     import BAXPlotter
-from baxter_ts.report.generator          import ReportGenerator
+from baxter_ts.preprocessing.validator    import DatetimeValidator
+from baxter_ts.preprocessing.imputer      import TimeSeriesImputer
+from baxter_ts.preprocessing.outlier      import OutlierHandler
+from baxter_ts.preprocessing.transformer  import StationarityTransformer
+from baxter_ts.preprocessing.scaler       import TimeSeriesScaler
+from baxter_ts.preprocessing.feature_eng  import TimeSeriesFeatureEngineer
+from baxter_ts.preprocessing.splitter     import TemporalSplitter
+from baxter_ts.preprocessing.column_handler import ColumnHandler
+from baxter_ts.models.selector            import ModelSelector
+from baxter_ts.bax.explainer              import BAXExplainer
+from baxter_ts.bax.narrator               import BAXNarrator
+from baxter_ts.anomaly.detector           import AnomalyDetector
+from baxter_ts.visualization.plotter      import BAXPlotter
+from baxter_ts.report.generator           import ReportGenerator
 
 
 class BAXModel:
@@ -82,33 +82,34 @@ class BAXModel:
         self._feature_cols: List[str] = []
 
         # Internal components
-        self._validator    = DatetimeValidator()
-        self._imputer      = TimeSeriesImputer()
-        self._outlier      = OutlierHandler(treatment=outlier_treatment)
-        self._transformer  = StationarityTransformer()
-        self._scaler       = TimeSeriesScaler()
-        self._feat_eng     = TimeSeriesFeatureEngineer()
-        self._splitter     = TemporalSplitter(test_size=test_size, n_splits=n_cv_splits)
+        self._validator   = DatetimeValidator()
+        self._imputer     = TimeSeriesImputer()
+        self._outlier     = OutlierHandler(treatment=outlier_treatment)
+        self._transformer = StationarityTransformer()
+        self._scaler      = TimeSeriesScaler()
+        self._feat_eng    = TimeSeriesFeatureEngineer()
+        self._splitter    = TemporalSplitter(test_size=test_size, n_splits=n_cv_splits)
         self._col_handler = ColumnHandler()
-        self._selector:  Optional[ModelSelector]  = None
-        self._explainer: Optional[BAXExplainer]   = None
+        self._selector:  Optional[ModelSelector]   = None
+        self._explainer: Optional[BAXExplainer]    = None
         self._detector:  Optional[AnomalyDetector] = None
 
         # Results
-        self._X_train: Optional[pd.DataFrame] = None
-        self._X_test:  Optional[pd.DataFrame] = None
-        self._y_train: Optional[pd.Series]    = None
-        self._y_test:  Optional[pd.Series]    = None
-        self._y_pred_test: Optional[np.ndarray] = None
+        self._X_train: Optional[pd.DataFrame]       = None
+        self._X_test:  Optional[pd.DataFrame]       = None
+        self._y_train: Optional[pd.Series]          = None
+        self._y_test:  Optional[pd.Series]          = None
+        self._y_pred_test: Optional[np.ndarray]     = None
         self._future_dates: Optional[pd.DatetimeIndex] = None
-        self._future_pred:  Optional[np.ndarray]       = None
-        self._anomaly_df:   Optional[pd.DataFrame]     = None
-        self._anomaly_df_audit: dict = {}
-        self._best_scores:  dict = {}
-        self._best_scores_original: dict = {}
-        self._bax_narrative: Optional[str] = None
-        self._preprocessing_audit: dict = {}
-        self._is_fitted: bool = False
+        self._future_pred:  Optional[np.ndarray]    = None
+        self._anomaly_df:   Optional[pd.DataFrame]  = None
+        self._anomaly_df_audit: dict                = {}
+        self._best_scores:  dict                    = {}
+        self._best_scores_original: dict            = {}
+        self._raw_target_series: Optional[pd.Series] = None
+        self._bax_narrative: Optional[str]          = None
+        self._preprocessing_audit: dict             = {}
+        self._is_fitted: bool                       = False
 
     # ------------------------------------------------------------------
     # PUBLIC API
@@ -142,7 +143,7 @@ class BAXModel:
         self._freq = self._validator.detected_freq
         self._log(f"      Detected frequency: {self._freq}  |  rows: {len(df)}")
 
-        # ── Step 1.5: Handle extra columns (categorical encode, drop useless) ──
+        # ── Step 1.5: Handle extra columns ─────────────────────────────
         self._log("[1.5/9] Column encoding and cleaning...")
         df = self._col_handler.fit_transform(df, target_col=target_col)
         dropped = self._col_handler.audit.get("columns_dropped", [])
@@ -162,6 +163,13 @@ class BAXModel:
         self._log(f"      Method: {self._outlier.audit['outlier_method']}  |  "
                   f"found: {self._outlier.audit['outliers_found']}")
 
+        # ── SAVE raw target BEFORE any transformation ──────────────────
+        # This is the ONLY correct save point for display metrics (MAPE, R²).
+        # After this point differencing and scaling change the values permanently.
+        # We save here: after imputation + outlier handling, before differencing.
+        # At scoring time: y_test_original = _raw_target_series.reindex(test_index)
+        self._raw_target_series = df[target_col].copy()
+
         # ── Step 5+6: Stationarity + decomposition ─────────────────────
         self._log("[4/9] Stationarity testing and STL decomposition...")
         with warnings.catch_warnings():
@@ -180,9 +188,9 @@ class BAXModel:
         df = self._feat_eng.fit_transform(df, target_col, freq=self._freq)
         self._log(f"      Features added: {len(self._feat_eng.feature_names_)}")
 
-        # Drop rows with NaN from lagging (keep at least 70% of data)
+        # Drop rows with NaN from lagging
         df = df.dropna(subset=[target_col])
-        df = df.fillna(0)   # remaining NaN in feature cols → 0
+        df = df.fillna(0)
 
         self._df_processed = df
 
@@ -193,11 +201,22 @@ class BAXModel:
         self._feature_cols = self._X_train.columns.tolist()
         self._log(f"      Train: {len(self._X_train)} rows  |  Test: {len(self._X_test)} rows")
 
-        # ── Inverse-transform y_test for original-scale metrics ──────
+        # ── Retrieve original-scale y_test ─────────────────────────────
+        # Slice from the raw series saved before differencing/scaling.
+        # This gives true original-scale values (e.g. actual passenger counts,
+        # actual stock prices) for the test period.
+        # inverse_transform_target() alone is WRONG here because it only undoes
+        # scaling, not differencing — leaving differenced values (~daily changes)
+        # which make MAPE ~99% even for a well-fitted model.
         try:
-            y_test_original = self._scaler.inverse_transform_target(
-                self._y_test.values, target_col, self._df_processed
+            y_test_original = (
+                self._raw_target_series
+                .reindex(self._y_test.index)
+                .values
             )
+            # Validate: if reindex produced all NaN (index mismatch), fall back
+            if np.all(np.isnan(y_test_original.astype(float))):
+                y_test_original = None
         except Exception:
             y_test_original = None
 
@@ -216,13 +235,6 @@ class BAXModel:
 
         # Generate test predictions
         self._y_pred_test = self._selector.best_model.predict(self._X_test)
-
-        try:
-            self._y_pred_test_original = self._scaler.inverse_transform_target(
-                self._y_pred_test, target_col, self._df_processed
-            )
-        except Exception:
-            self._y_pred_test_original = self._y_pred_test
 
         # ── BAX explanation ────────────────────────────────────────────
         self._log("[9/9] Computing BAX explanation (SHAP)...")
@@ -263,10 +275,7 @@ class BAXModel:
     def predict(self, steps: int = 30) -> pd.DataFrame:
         """
         Generate future forecast for `steps` time periods ahead.
-        Uses a sliding-window direct forecast: replicate the last known
-        feature row, advance calendar/Fourier features step-by-step,
-        and recycle predicted values into lag slots.
-
+        Uses a sliding-window direct forecast.
         Returns a DataFrame with columns: date, forecast.
         """
         self._check_fitted()
@@ -276,39 +285,40 @@ class BAXModel:
         freq = self._freq or "D"
 
         try:
-            future_dates = pd.date_range(start=last_date, periods=steps + 1, freq=freq)[1:]
+            future_dates = pd.date_range(
+                start=last_date, periods=steps + 1, freq=freq
+            )[1:]
         except Exception:
-            future_dates = pd.date_range(start=last_date, periods=steps + 1, freq="D")[1:]
+            future_dates = pd.date_range(
+                start=last_date, periods=steps + 1, freq="D"
+            )[1:]
 
-        # ── Build a sliding window of the last max_lag rows of target values
-        # so we can fill lag_N and rolling features properly each step
         max_lag = max(self._feat_eng.lags) if self._feat_eng.lags else 30
         window_size = max_lag + max(self._feat_eng.rolling_windows or [30])
-
-        # Pull the last window of processed target values (scaled space)
         target_series = self._df_processed[self.target_col].dropna().values
         history = list(target_series[-window_size:])
 
-        # Take the last processed feature row as a template for non-time features
         last_feat_row = self._df_processed[self._feature_cols].iloc[-1].copy()
-
         future_preds = []
-        lags = self._feat_eng.lags or [1, 7, 14, 21, 30]
+        lags    = self._feat_eng.lags or [1, 7, 14, 21, 30]
         windows = self._feat_eng.rolling_windows or [7, 14, 30]
-        period_map = {"min": 1440, "h": 24, "D": 365.25, "W": 52, "MS": 12, "YS": 1, "Q": 4}
-        period = period_map.get(freq, 365.25)
+        period_map = {
+            "min": 1440, "h": 24, "D": 365.25, "W": 52,
+            "MS": 12, "YS": 1, "Q": 4,
+        }
+        period    = period_map.get(freq, 365.25)
         total_len = len(self._df_processed)
 
         for step_i, step_date in enumerate(future_dates):
             row = last_feat_row.copy()
 
-            # 1. Update lag features from rolling history
+            # 1. Lag features
             for lag in lags:
                 col = f"lag_{lag}"
                 if col in row.index and len(history) >= lag:
                     row[col] = history[-lag]
 
-            # 2. Update rolling stat features
+            # 2. Rolling statistics
             for win in windows:
                 hist_win = history[-win:] if len(history) >= win else history
                 hist_arr = np.array(hist_win)
@@ -323,12 +333,12 @@ class BAXModel:
                         elif stat == "std": row[col] = float(np.std(hist_arr)) if len(hist_arr) > 1 else 0.0
                         elif stat == "min": row[col] = float(np.min(hist_arr))
                         elif stat == "max": row[col] = float(np.max(hist_arr))
-                        roll_range_col = f"roll_range_{win}"
-                        if roll_range_col in row.index:
-                            row[roll_range_col] = float(np.max(hist_arr) - np.min(hist_arr))
+                        rr = f"roll_range_{win}"
+                        if rr in row.index:
+                            row[rr] = float(np.max(hist_arr) - np.min(hist_arr))
 
-            # 3. Update EWM features (approximate via last value)
-            for alpha_str, col in [("02", "ewm_02"), ("05", "ewm_05"), ("08", "ewm_08")]:
+            # 3. EWM
+            for alpha_str, col in [("02","ewm_02"),("05","ewm_05"),("08","ewm_08")]:
                 if col in row.index and len(history) >= 2:
                     alpha = float("0." + alpha_str)
                     ewm_val = history[-1]
@@ -338,47 +348,44 @@ class BAXModel:
 
             # 4. Momentum
             if "pct_change_1" in row.index and len(history) >= 2:
-                denom = history[-2]
-                row["pct_change_1"] = (history[-1] - denom) / (abs(denom) + 1e-9)
+                d = history[-2]
+                row["pct_change_1"] = (history[-1] - d) / (abs(d) + 1e-9)
             if "pct_change_7" in row.index and len(history) >= 8:
-                denom = history[-8]
-                row["pct_change_7"] = (history[-1] - denom) / (abs(denom) + 1e-9)
+                d = history[-8]
+                row["pct_change_7"] = (history[-1] - d) / (abs(d) + 1e-9)
 
-            # 5. Advance time index
+            # 5. Time index
             t = total_len + step_i
             if "time_idx" in row.index:
                 row["time_idx"] = t
 
-            # 6. Update calendar features
-            if "dayofweek" in row.index:   row["dayofweek"]  = step_date.dayofweek
-            if "month" in row.index:       row["month"]      = step_date.month
-            if "quarter" in row.index:     row["quarter"]    = step_date.quarter
-            if "dayofyear" in row.index:   row["dayofyear"]  = step_date.dayofyear
-            if "is_weekend" in row.index:  row["is_weekend"] = int(step_date.dayofweek >= 5)
-            if "hour" in row.index:        row["hour"]       = step_date.hour
+            # 6. Calendar
+            if "dayofweek" in row.index:    row["dayofweek"]   = step_date.dayofweek
+            if "month" in row.index:        row["month"]       = step_date.month
+            if "quarter" in row.index:      row["quarter"]     = step_date.quarter
+            if "dayofyear" in row.index:    row["dayofyear"]   = step_date.dayofyear
+            if "is_weekend" in row.index:   row["is_weekend"]  = int(step_date.dayofweek >= 5)
+            if "hour" in row.index:         row["hour"]        = step_date.hour
             if "is_month_start" in row.index: row["is_month_start"] = int(step_date.is_month_start)
             if "is_month_end" in row.index:   row["is_month_end"]   = int(step_date.is_month_end)
             if "is_quarter_end" in row.index: row["is_quarter_end"] = int(step_date.is_quarter_end)
 
-            # 7. Advance Fourier terms
-            fourier_order = self._feat_eng.fourier_order if self._feat_eng else 3
-            for k in range(1, fourier_order + 1):
+            # 7. Fourier
+            fo = self._feat_eng.fourier_order if self._feat_eng else 3
+            for k in range(1, fo + 1):
                 if f"sin_k{k}" in row.index:
                     row[f"sin_k{k}"] = np.sin(2 * np.pi * k * t / period)
                 if f"cos_k{k}" in row.index:
                     row[f"cos_k{k}"] = np.cos(2 * np.pi * k * t / period)
 
             # 8. Predict
-            X_row = pd.DataFrame([row[self._feature_cols]])
-            X_row = X_row.fillna(0)
+            X_row = pd.DataFrame([row[self._feature_cols]]).fillna(0)
             pred_val = float(self._selector.best_model.predict(X_row)[0])
             future_preds.append(pred_val)
-
-            # 9. Append to history for next step
             history.append(pred_val)
 
         self._future_dates = future_dates
-        self._future_pred = np.array(future_preds)
+        self._future_pred  = np.array(future_preds)
 
         result = pd.DataFrame({"date": future_dates, "forecast": future_preds})
         result.set_index("date", inplace=True)
@@ -388,7 +395,8 @@ class BAXModel:
     def anomalies(self) -> pd.DataFrame:
         """
         Run anomaly detection on the test set residuals.
-        Returns DataFrame with: actual, predicted, residual, anomaly_flag, severity_label.
+        Returns DataFrame with: actual, predicted, residual,
+        anomaly_flag, severity, severity_label.
         """
         self._check_fitted()
         self._log("\nRunning anomaly detection...")
@@ -396,7 +404,9 @@ class BAXModel:
             method=self.anomaly_method,
             contamination=self.contamination,
         )
-        self._anomaly_df = self._detector.fit_predict(self._y_test, self._y_pred_test)
+        self._anomaly_df = self._detector.fit_predict(
+            self._y_test, self._y_pred_test
+        )
         self._anomaly_df_audit = self._detector.audit
         self._log(f"  Anomalies found: {self._detector.audit['anomalies_found']} "
                   f"({self._detector.audit['anomaly_pct']}%)")
@@ -422,7 +432,6 @@ class BAXModel:
         """
         Generate all interactive Plotly charts.
         Returns a dict of figure objects.
-        Set show=False to suppress auto-display (useful in scripts).
         """
         self._check_fitted()
         plotter = BAXPlotter()
@@ -440,8 +449,8 @@ class BAXModel:
             self.anomalies()
 
         if self._anomaly_df is not None:
-            figs["anomaly"]  = plotter.anomaly_plot(self._anomaly_df, self.target_col)
-            figs["residuals"]= plotter.residual_plot(self._anomaly_df)
+            figs["anomaly"]   = plotter.anomaly_plot(self._anomaly_df, self.target_col)
+            figs["residuals"] = plotter.residual_plot(self._anomaly_df)
 
         if self._explainer and self._explainer.feature_importance_ is not None:
             figs["shap"] = plotter.shap_plot(self._explainer.feature_importance_)
@@ -464,13 +473,7 @@ class BAXModel:
 
     def report(self, output_path: str = "bax_report") -> str:
         """
-        Export full HTML report with all charts, metrics, narrative and audit trail.
-
-        Parameters
-        ----------
-        output_path : str
-            File path (without extension). Saves as output_path.html.
-
+        Export full HTML report. Saves as output_path.html.
         Returns the saved file path.
         """
         self._check_fitted()
@@ -480,20 +483,21 @@ class BAXModel:
         return gen.generate(self, output_path)
 
     def summary(self) -> dict:
-        """Return a flat dict of all key results — useful for programmatic access."""
+        """Return a flat dict of all key results."""
         self._check_fitted()
+        display = self._best_scores_original or self._best_scores
         return {
-            "target_col": self.target_col,
-            "frequency": self._freq,
-            "best_model": self._selector.best_model.name if self._selector else None,
-            "test_mae":  self._best_scores.get("mae"),
-            "test_rmse": self._best_scores.get("rmse"),
-            "test_mape": self._best_scores.get("mape"),
-            "test_r2":   self._best_scores.get("r2"),
-            "anomalies_found": self._anomaly_df_audit.get("anomalies_found"),
+            "target_col":        self.target_col,
+            "frequency":         self._freq,
+            "best_model":        self._selector.best_model.name if self._selector else None,
+            "test_mae":          display.get("mae"),
+            "test_rmse":         display.get("rmse"),
+            "test_mape":         display.get("mape"),
+            "test_r2":           display.get("r2"),
+            "anomalies_found":   self._anomaly_df_audit.get("anomalies_found"),
             "shap_top_features": self._explainer.top_features_ if self._explainer else [],
-            "train_rows": self._splitter.audit.get("train_size"),
-            "test_rows":  self._splitter.audit.get("test_size"),
+            "train_rows":        self._splitter.audit.get("train_size"),
+            "test_rows":         self._splitter.audit.get("test_size"),
         }
 
     # ------------------------------------------------------------------

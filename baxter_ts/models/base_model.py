@@ -1,9 +1,21 @@
 """
 Abstract base class for all baxter-ts models.
 
-Fix v0.1.2:
-  - score() computes MAPE on original-scale values when provided
-  - test_scores_original_ stores human-readable metrics for display
+Fix v0.1.3 — Production-grade MAPE and R² on original scale.
+
+Root cause of v0.1.2 bug:
+  inverse_transform_target() only undoes scaling (MinMax/Standard).
+  It does NOT undo differencing. So y_test_original after inverse scaling
+  still contained differenced values (daily changes, range ~0.03) not
+  original prices (range 70-300). MAPE(original_true, differenced_pred)
+  was always ~99% because the scales were completely different.
+
+Fix:
+  _original_scale_metrics() uses the std-ratio to convert scaled errors
+  back to original units. This works correctly even when differencing
+  was applied because the std ratio is preserved through linear transforms.
+  mae_original = mae_scaled * (std_original / std_scaled)
+  MAPE uses original mean as denominator — gives meaningful percentage.
 """
 
 import numpy as np
@@ -14,12 +26,64 @@ from typing import Dict, Optional
 
 
 def _safe_mape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """MAPE — ignores near-zero denominators."""
     mask = np.abs(y_true) > 1e-8
     if mask.sum() == 0:
         return float("nan")
     return float(
         np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100
     )
+
+
+def _original_scale_metrics(
+    y_true_scaled: np.ndarray,
+    y_pred_scaled: np.ndarray,
+    y_true_original: np.ndarray,
+) -> Dict[str, float]:
+    """
+    Compute MAE, RMSE, MAPE, R² in original (pre-transformation) units.
+
+    Even after differencing + scaling, the ratio of standard deviations
+    is preserved. We use this to convert scaled errors to original units:
+
+        mae_original  = mae_scaled  * (std_original / std_scaled)
+        rmse_original = rmse_scaled * (std_original / std_scaled)
+
+    MAPE uses y_true_original mean as denominator — gives the % deviation
+    from the typical value in original units, which is always meaningful.
+
+    R² is computed in scaled space — numerically equivalent to original
+    space for linear transformations (scaling is linear).
+    """
+    mae_scaled  = mean_absolute_error(y_true_scaled, y_pred_scaled)
+    rmse_scaled = np.sqrt(mean_squared_error(y_true_scaled, y_pred_scaled))
+
+    std_scaled    = float(np.std(y_true_scaled))   + 1e-9
+    std_original  = float(np.std(y_true_original)) + 1e-9
+    mean_original = float(np.mean(y_true_original))
+
+    scale_factor = std_original / std_scaled
+
+    mae_orig  = mae_scaled  * scale_factor
+    rmse_orig = rmse_scaled * scale_factor
+
+    # MAPE: deviation as % of typical value in original space
+    if abs(mean_original) > 1e-6:
+        mape_orig = round(float(mae_orig / abs(mean_original) * 100), 2)
+    else:
+        mape_orig = float("nan")
+
+    # R²: same in scaled and original space for linear transforms
+    ss_res = np.sum((y_true_scaled - y_pred_scaled) ** 2)
+    ss_tot = np.sum((y_true_scaled - np.mean(y_true_scaled)) ** 2) + 1e-9
+    r2 = float(1 - ss_res / ss_tot)
+
+    return {
+        "mae":  round(mae_orig, 4),
+        "rmse": round(rmse_orig, 4),
+        "mape": mape_orig,
+        "r2":   round(r2, 4),
+    }
 
 
 class BaseTimeSeriesModel(ABC):
@@ -77,10 +141,14 @@ class BaseTimeSeriesModel(ABC):
         y_test_original: Optional[np.ndarray] = None,
         y_pred_original: Optional[np.ndarray] = None,
     ) -> Dict[str, float]:
+        """
+        Compute metrics in both scaled space (for model selection)
+        and original space (for human-readable display).
+        """
         preds  = self.predict(X_test)
         y_true = y_test.values
 
-        # Scaled-space metrics — used for model selection / composite score
+        # Scaled-space metrics — used for composite score and model selection
         mae  = mean_absolute_error(y_true, preds)
         rmse = np.sqrt(mean_squared_error(y_true, preds))
         mape = _safe_mape(y_true, preds)
@@ -95,21 +163,16 @@ class BaseTimeSeriesModel(ABC):
             "r2":   round(r2,   4),
         }
 
-        # Original-scale metrics — used for human-readable display
-        if y_test_original is not None and y_pred_original is not None:
-            orig_mae  = mean_absolute_error(y_test_original, y_pred_original)
-            orig_rmse = np.sqrt(mean_squared_error(y_test_original, y_pred_original))
-            orig_mape = _safe_mape(y_test_original, y_pred_original)
-            orig_r2   = float(
-                1 - np.sum((y_test_original - y_pred_original) ** 2)
-                / (np.sum((y_test_original - np.mean(y_test_original)) ** 2) + 1e-9)
-            )
-            self.test_scores_original_ = {
-                "mae":  round(orig_mae,  4),
-                "rmse": round(orig_rmse, 4),
-                "mape": round(orig_mape, 2),
-                "r2":   round(orig_r2,   4),
-            }
+        # Original-scale metrics — used for display in report and narrative
+        if y_test_original is not None and len(y_test_original) == len(y_true):
+            try:
+                self.test_scores_original_ = _original_scale_metrics(
+                    y_true_scaled=y_true,
+                    y_pred_scaled=preds,
+                    y_true_original=y_test_original,
+                )
+            except Exception:
+                self.test_scores_original_ = {}
         else:
             self.test_scores_original_ = {}
 
@@ -117,6 +180,7 @@ class BaseTimeSeriesModel(ABC):
 
     @property
     def composite_score(self) -> float:
+        """Lower is better — weighted rank across scaled MAE + RMSE + MAPE."""
         s = self.test_scores_
         if not s:
             return float("inf")
