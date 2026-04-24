@@ -1,8 +1,3 @@
-Open `D:\baxter-ts\README.md`, press `Ctrl+A`, delete, paste this entire content:
-
----
-
-```markdown
 # baxter-ts
 
 > AutoML time series library with BAX (Behavioural Analysis & eXplanation)
