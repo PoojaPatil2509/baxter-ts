@@ -52,14 +52,21 @@ def run_full_pipeline(df, target_col, date_col, n_cv=2, steps=10):
     narrative = model.explain()
     assert isinstance(narrative, str) and len(narrative) > 30
 
-    # Scoreboard
+    # Scoreboard — v0.2.0: 3 ML models + SeasonalNaive baseline
     sb = model.scoreboard()
     assert isinstance(sb, pd.DataFrame)
-    assert len(sb) == 3, "Must have exactly 3 model candidates"
+    assert len(sb) == 4, "Must have 3 ML candidates + SeasonalNaive baseline"
+    assert "SeasonalNaive" in sb.index
+
+    # v0.2.0: prediction intervals in original units
+    assert {"forecast", "lower", "upper"}.issubset(forecast.columns)
+    valid = forecast.dropna()
+    assert (valid["lower"] <= valid["forecast"]).all()
+    assert (valid["forecast"] <= valid["upper"]).all()
 
     # Summary
     s = model.summary()
-    assert s["best_model"] in ["RandomForest", "XGBoost", "CatBoost"]
+    assert s["best_model"] in ["RandomForest", "XGBoost", "CatBoost", "SeasonalNaive"]
     assert s["test_mae"] is not None and s["test_mae"] >= 0
     assert s["test_r2"] is not None
 

@@ -5,6 +5,12 @@ from baxter_ts.models.base_model import BaseTimeSeriesModel
 
 
 class CatModel(BaseTimeSeriesModel):
+    PARAM_GRID = {
+        "iterations": [200, 300, 500],
+        "learning_rate": [0.03, 0.05, 0.1],
+        "depth": [4, 6, 8],
+    }
+
     def __init__(self, iterations: int = 300, learning_rate: float = 0.05,
                  depth: int = 6, random_state: int = 42):
         super().__init__("CatBoost")

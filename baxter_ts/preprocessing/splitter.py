@@ -17,6 +17,12 @@ class TemporalSplitter:
     ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
         """Simple last-N-rows test split — no shuffle, respects time."""
         n = len(df)
+        if n < 10:
+            raise ValueError(
+                f"Only {n} usable rows after preprocessing — too few to "
+                "train and evaluate. baxter-ts needs at least ~20 rows "
+                "(ideally 100+) of regular time series data."
+            )
         test_n = max(1, int(n * self.test_size))
         train_df = df.iloc[: n - test_n]
         test_df = df.iloc[n - test_n :]

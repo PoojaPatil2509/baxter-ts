@@ -37,6 +37,14 @@ class TimeSeriesFeatureEngineer:
         self.lags = self.lags or self._default_lags(freq)
         self.rolling_windows = self.rolling_windows or self._default_windows(freq)
 
+        # Short-series guard: a lag/window near the series length would wipe
+        # out most rows via NaN. Cap both at a third of the data.
+        max_span = max(2, len(df) // 3)
+        self.lags = sorted({lag for lag in self.lags if lag <= max_span}) or [1]
+        self.rolling_windows = (
+            sorted({w for w in self.rolling_windows if w <= max_span}) or [2]
+        )
+
         # Lag features
         for lag in self.lags:
             df[f"lag_{lag}"] = df[target_col].shift(lag)
@@ -84,25 +92,28 @@ class TimeSeriesFeatureEngineer:
         return df
 
     def _default_lags(self, freq: str) -> List[int]:
+        # Keys are canonical tokens from baxter_ts.utils.normalize_freq.
+        # v0.1.x bug: these were keyed "T"/"H" while the validator emitted
+        # "min"/"h", so sub-daily data silently got the daily defaults.
         return {
-            "T":  [1, 5, 15, 30, 60],
-            "H":  [1, 3, 6, 12, 24, 48],
-            "D":  [1, 7, 14, 21, 30],
-            "W":  [1, 4, 8, 13, 26, 52],
-            "MS": [1, 3, 6, 9, 12],
-            "Q":  [1, 2, 4],
-            "YS": [1, 2, 3],
+            "min": [1, 5, 15, 30, 60],
+            "h":   [1, 3, 6, 12, 24, 48],
+            "D":   [1, 7, 14, 21, 30],
+            "W":   [1, 4, 8, 13, 26, 52],
+            "MS":  [1, 3, 6, 9, 12],
+            "Q":   [1, 2, 4],
+            "YS":  [1, 2, 3],
         }.get(freq, [1, 7, 14, 30])
 
     def _default_windows(self, freq: str) -> List[int]:
         return {
-            "T":  [5, 15, 60],
-            "H":  [6, 12, 24],
-            "D":  [7, 14, 30],
-            "W":  [4, 13, 26],
-            "MS": [3, 6, 12],
-            "Q":  [2, 4],
-            "YS": [2, 3],
+            "min": [5, 15, 60],
+            "h":   [6, 12, 24],
+            "D":   [7, 14, 30],
+            "W":   [4, 13, 26],
+            "MS":  [3, 6, 12],
+            "Q":   [2, 4],
+            "YS":  [2, 3],
         }.get(freq, [7, 14, 30])
 
     def _add_calendar_features(self, df: pd.DataFrame, freq: str) -> pd.DataFrame:

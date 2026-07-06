@@ -69,16 +69,21 @@ class DatetimeValidator:
             if name in df.columns:
                 return name
         for col in df.columns:
+            # Numeric columns parse as nanosecond epochs (1, 2, 3 → 1970-01-01...)
+            # and would be silently mis-detected as dates — skip them.
+            if pd.api.types.is_numeric_dtype(df[col]):
+                continue
             try:
-                pd.to_datetime(df[col].head(10), infer_datetime_format=True)
-                return col
+                parsed = pd.to_datetime(df[col].head(10), errors="coerce")
+                if parsed.notna().mean() >= 0.8:
+                    return col
             except Exception:
                 continue
         return None
 
     def _parse_datetime(self, series: pd.Series) -> pd.Series:
         try:
-            return pd.to_datetime(series, infer_datetime_format=True)
+            return pd.to_datetime(series)
         except Exception:
             pass
         for fmt in self.COMMON_DATE_FORMATS:

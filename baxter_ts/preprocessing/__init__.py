@@ -6,8 +6,10 @@ from baxter_ts.preprocessing.scaler          import TimeSeriesScaler
 from baxter_ts.preprocessing.feature_eng     import TimeSeriesFeatureEngineer
 from baxter_ts.preprocessing.splitter        import TemporalSplitter
 from baxter_ts.preprocessing.column_handler  import ColumnHandler
+from baxter_ts.preprocessing.inverse         import TargetInverter
 
 __all__ = [
+    "TargetInverter",
     "DatetimeValidator",
     "TimeSeriesImputer",
     "OutlierHandler",

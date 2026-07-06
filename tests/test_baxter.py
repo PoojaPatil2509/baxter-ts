@@ -365,7 +365,8 @@ class TestBAXModel:
         m.fit(df, target_col="sales", date_col="date")
         sb = m.scoreboard()
         assert isinstance(sb, pd.DataFrame)
-        assert len(sb) == 3
+        # v0.2.0: 3 ML models + SeasonalNaive baseline
+        assert len(sb) == 4
 
     def test_report_creates_file(self, tmp_path):
         from baxter_ts import BAXModel

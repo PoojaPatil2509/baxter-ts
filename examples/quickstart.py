@@ -39,9 +39,9 @@ model = BAXModel(
 )
 model.fit(df, target_col="sales", date_col="date")
 
-# ── Forecast ──────────────────────────────────────────────────────────
+# ── Forecast (original units + prediction intervals, v0.2.0) ─────────
 forecast = model.predict(steps=30)
-print("\n30-day forecast:")
+print("\n30-day forecast with 95% intervals:")
 print(forecast.head(10))
 
 # ── BAX Explanation ───────────────────────────────────────────────────
@@ -65,3 +65,9 @@ for k, v in model.summary().items():
 report_path = model.report("quickstart_report")
 print(f"\nReport saved to: {report_path}")
 print("Open it in your browser to see all interactive charts.")
+
+# ── Persistence (v0.2.0) ─────────────────────────────────────────────
+model_path = model.save("quickstart_model")
+reloaded = BAXModel.load(model_path)
+print(f"\nModel saved to {model_path} and reloaded — "
+      f"next 7 days:\n{reloaded.predict(steps=7)}")

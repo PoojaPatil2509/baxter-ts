@@ -104,6 +104,22 @@ class ColumnHandler:
                     encoded_label.append(col)
                 continue
 
+            # ── Drop: numeric ID-like (v0.2.0) ─────────────────────────
+            # A strictly monotonic, (nearly) all-unique integer column is a
+            # row counter / auto-increment key, not a feature — it proxies
+            # the time index and invites overfitting.
+            if pd.api.types.is_integer_dtype(series):
+                clean = series.dropna()
+                if (
+                    len(clean) > 10
+                    and clean.nunique() >= len(clean) * 0.95
+                    and (clean.is_monotonic_increasing
+                         or clean.is_monotonic_decreasing)
+                ):
+                    df.drop(columns=[col], inplace=True)
+                    dropped.append(f"{col} (numeric ID-like, monotonic unique)")
+                    continue
+
             # ── Integer-encoded categoricals disguised as int ──────────
             # (no action needed — they pass through as numeric)
 

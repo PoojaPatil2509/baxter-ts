@@ -63,11 +63,12 @@ df = pd.read_csv("your_data.csv")
 model = BAXModel()
 model.fit(df, target_col="sales", date_col="date")
 
-model.predict(steps=30)     # 30-step future forecast
+model.predict(steps=30)     # forecast + prediction intervals, original units
 model.explain()             # BAX plain-English narrative
 model.anomalies()           # anomaly DataFrame
 model.visualize()           # 7 interactive Plotly charts
 model.report("my_report")   # saves my_report.html — open in any browser
+model.save("my_model")      # persist; restore with BAXModel.load("my_model.joblib")
 ```
 
 ---
@@ -92,8 +93,10 @@ Raw data
     ├── AutoML competition
     │       ├── Random Forest
     │       ├── XGBoost
-    │       └── CatBoost
+    │       ├── CatBoost
+    │       └── SeasonalNaive baseline (the honesty check)
     │             → winner selected by composite MAE + RMSE + MAPE score
+    │             → optional tune=True random hyperparameter search
     │
     ├── BAX explanation      SHAP values translated to plain English narrative
     ├── Anomaly detection    ensemble of Isolation Forest + Z-score + IQR on residuals
@@ -113,6 +116,9 @@ BAXModel(
     outlier_treatment = "cap",      # "cap" (winsorise) or "flag" (add boolean column)
     anomaly_method    = "ensemble", # "ensemble" | "isolation_forest" | "zscore" | "iqr"
     contamination     = 0.05,       # expected anomaly fraction for Isolation Forest
+    tune              = False,      # small random hyperparameter search per model
+    include_baseline  = True,       # SeasonalNaive baseline joins the competition
+    interval          = 0.95,       # prediction interval level for predict()
     verbose           = True,       # print pipeline progress to console
 )
 ```
@@ -135,9 +141,34 @@ Returns `self` — supports method chaining.
 
 ### `.predict(steps=30) → pd.DataFrame`
 
-Generates a future forecast for `steps` time periods ahead.
+Generates a future forecast for `steps` time periods ahead, **in the original
+units of your data**, with prediction intervals.
 
-Returns a DataFrame indexed by future dates with a single `forecast` column.
+Returns a DataFrame indexed by future dates with columns:
+
+| Column | Description |
+|---|---|
+| `forecast` | Point forecast in original units |
+| `lower` | Lower bound of the prediction interval |
+| `upper` | Upper bound of the prediction interval |
+
+Interval level is set by `BAXModel(interval=0.95)`. On differenced
+(integrated) series the band widens with the forecast horizon, as it should.
+
+---
+
+### `.save(path)` / `BAXModel.load(path)`
+
+Persist a fitted model to disk and restore it later — `predict()`,
+`explain()`, `anomalies()`, `visualize()` and `report()` all work on the
+loaded model.
+
+```python
+model.save("sales_model.joblib")
+# ... later, in another process ...
+model = BAXModel.load("sales_model.joblib")
+model.predict(steps=30)
+```
 
 ---
 
@@ -168,7 +199,7 @@ Returns a DataFrame with columns:
 
 ### `.scoreboard() → pd.DataFrame`
 
-Returns the full AutoML competition results with MAE, RMSE, MAPE, R², CV scores, and composite score for all three candidate models.
+Returns the full AutoML competition results with MAE, RMSE, MAPE, R², CV scores, and composite score for all candidate models — including the **SeasonalNaive baseline**, so you can see at a glance whether the ML models actually beat "same value one season ago".
 
 ---
 
@@ -208,10 +239,12 @@ model.summary()
 #     "target_col":        "sales",
 #     "frequency":         "D",
 #     "best_model":        "CatBoost",
-#     "test_mae":          0.1367,
-#     "test_rmse":         0.203,
-#     "test_mape":         70.9,
+#     "test_mae":          12.41,          # original units (v0.2.0+)
+#     "test_rmse":         15.88,
+#     "test_mape":         4.2,
 #     "test_r2":           0.9523,
+#     "baseline_mae":      31.07,          # SeasonalNaive, for comparison
+#     "interval_level":    0.95,
 #     "anomalies_found":   2,
 #     "shap_top_features": ["seasonal_component", "residual_component", "dayofweek"],
 #     "train_rows":        400,
@@ -368,6 +401,7 @@ The report has no external dependencies and works fully offline.
 baxter-ts/
 ├── baxter_ts/
 │   ├── core.py                      ← BAXModel — public API entry point
+│   ├── utils.py                     ← frequency alias normalisation
 │   ├── preprocessing/
 │   │   ├── validator.py             ← datetime parsing and frequency inference
 │   │   ├── imputer.py               ← missing value imputation
@@ -376,13 +410,15 @@ baxter-ts/
 │   │   ├── scaler.py                ← feature scaling
 │   │   ├── feature_eng.py           ← lag, rolling, Fourier, and calendar features
 │   │   ├── splitter.py              ← temporal train/test split
-│   │   └── column_handler.py        ← categorical encoding and column cleanup
+│   │   ├── column_handler.py        ← categorical encoding and column cleanup
+│   │   └── inverse.py               ← TargetInverter — back to original units
 │   ├── models/
 │   │   ├── base_model.py            ← shared fit, score, and CV logic
 │   │   ├── rf_model.py              ← Random Forest
 │   │   ├── xgb_model.py             ← XGBoost
 │   │   ├── catboost_model.py        ← CatBoost
-│   │   └── selector.py              ← AutoML competition and winner selection
+│   │   ├── baseline_model.py        ← SeasonalNaive baseline (the honesty check)
+│   │   └── selector.py              ← AutoML competition, tuning, winner selection
 │   ├── bax/
 │   │   ├── explainer.py             ← SHAP TreeExplainer wrapper
 │   │   └── narrator.py              ← SHAP values to plain-English narrative

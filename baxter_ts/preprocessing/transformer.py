@@ -27,6 +27,19 @@ class StationarityTransformer:
         df = df.copy()
         series = df[target_col].dropna()
 
+        # Constant / near-constant / tiny series: ADF and KPSS either crash
+        # or are meaningless. Leave the target untouched.
+        if (
+            len(series) < 20
+            or series.nunique() <= 2
+            or float(series.std()) < 1e-10
+        ):
+            self.audit["transform_skipped"] = (
+                "series too short or (near-)constant — no stationarity transform"
+            )
+            self.audit["diffs_applied"] = 0
+            return self._decompose(df, target_col, freq)
+
         is_stationary, adf_p, kpss_p = self._test_stationarity(series)
         self.audit["adf_pvalue"] = round(float(adf_p), 4)
         self.audit["kpss_pvalue"] = round(float(kpss_p), 4)
@@ -42,9 +55,12 @@ class StationarityTransformer:
                 test_series = df[target_col].diff(d).dropna()
                 if len(test_series) < 10:
                     break
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    stat, p, *_ = adfuller(test_series, autolag="AIC")
+                try:
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")
+                        stat, p, *_ = adfuller(test_series, autolag="AIC")
+                except Exception:
+                    break
                 if p < 0.05:
                     df[target_col] = df[target_col].diff(d)
                     df.dropna(subset=[target_col], inplace=True)

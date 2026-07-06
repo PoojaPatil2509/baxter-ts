@@ -41,6 +41,9 @@ class BAXPlotter:
         future_pred: Optional[np.ndarray] = None,
         ci_lower: Optional[np.ndarray] = None,
         ci_upper: Optional[np.ndarray] = None,
+        future_lower: Optional[np.ndarray] = None,
+        future_upper: Optional[np.ndarray] = None,
+        interval: float = 0.95,
         target_col: str = "target",
     ):
         go, _ = _plotly()
@@ -71,8 +74,16 @@ class BAXPlotter:
                 name="95% CI", showlegend=True,
             ))
 
-        # Future forecast
+        # Future forecast with prediction interval band
         if future_dates is not None and future_pred is not None:
+            if future_lower is not None and future_upper is not None:
+                fig.add_trace(go.Scatter(
+                    x=np.concatenate([future_dates, future_dates[::-1]]),
+                    y=np.concatenate([future_upper, future_lower[::-1]]),
+                    fill="toself", fillcolor=self.COLORS["ci"],
+                    line=dict(color="rgba(0,0,0,0)"),
+                    name=f"{int(interval * 100)}% interval", showlegend=True,
+                ))
             fig.add_trace(go.Scatter(
                 x=future_dates, y=future_pred,
                 name="Forecast", line=dict(color=self.COLORS["predicted"], width=2.5),
@@ -179,9 +190,10 @@ class BAXPlotter:
         df = pd.DataFrame(scoreboard)
         metrics = ["mae", "rmse", "mape"]
         model_colors = {
-            "RandomForest": self.COLORS["rf"],
-            "XGBoost":      self.COLORS["xgb"],
-            "CatBoost":     self.COLORS["cat"],
+            "RandomForest":  self.COLORS["rf"],
+            "XGBoost":       self.COLORS["xgb"],
+            "CatBoost":      self.COLORS["cat"],
+            "SeasonalNaive": "#8A8A85",
         }
 
         fig = sp.make_subplots(

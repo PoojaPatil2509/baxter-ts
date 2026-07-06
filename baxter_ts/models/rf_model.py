@@ -5,6 +5,11 @@ from baxter_ts.models.base_model import BaseTimeSeriesModel
 
 
 class RFModel(BaseTimeSeriesModel):
+    PARAM_GRID = {
+        "n_estimators": [100, 200, 400],
+        "max_depth": [6, 10, 16],
+    }
+
     def __init__(self, n_estimators: int = 200, max_depth: int = 10,
                  random_state: int = 42):
         super().__init__("RandomForest")

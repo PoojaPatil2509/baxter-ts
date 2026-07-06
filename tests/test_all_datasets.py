@@ -199,10 +199,12 @@ class TestDataset01_RetailSalesDaily:
         txt = m.explain()
         assert len(txt) > 100
 
-    def test_scoreboard_has_3_models(self):
+    def test_scoreboard_has_all_models(self):
+        # v0.2.0: 3 ML models + SeasonalNaive baseline
         m = quick_fit("01_retail_sales_daily.csv", "sales", "date")
         sb = m.scoreboard()
-        assert len(sb) == 3
+        assert len(sb) == 4
+        assert "SeasonalNaive" in sb.index
 
     def test_report_generates(self, tmp_path):
         m = quick_fit("01_retail_sales_daily.csv", "sales", "date")
@@ -485,9 +487,10 @@ class TestModelEvaluation:
             assert winner_score <= r["composite_score"], \
                 f"Winner {winner_name} ({winner_score}) is not the lowest composite"
 
-    def test_all_three_models_trained(self, fitted_model):
+    def test_all_models_trained(self, fitted_model):
+        # v0.2.0: 3 ML models + SeasonalNaive baseline
         names = {r["model"] for r in fitted_model._selector.scoreboard}
-        assert names == {"RandomForest", "XGBoost", "CatBoost"}
+        assert names == {"RandomForest", "XGBoost", "CatBoost", "SeasonalNaive"}
 
     def test_no_data_leakage_in_split(self, fitted_model):
         assert fitted_model._X_train.index.max() < fitted_model._X_test.index.min(), \
@@ -650,7 +653,7 @@ class TestReportGeneration:
         m = quick_fit("01_retail_sales_daily.csv", "sales", "date")
         m.anomalies()
         path = m.report(str(tmp_path / "report"))
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             html = f.read()
         cdn_tags = re.findall(
             r'<script[^>]+src=["\']https?://[^"\']*["\']', html
@@ -662,7 +665,7 @@ class TestReportGeneration:
         m = quick_fit("01_retail_sales_daily.csv", "sales", "date")
         m.anomalies()
         path = m.report(str(tmp_path / "report"))
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             html = f.read()
         inline_scripts = re.findall(
             r'<script type=["\']text/javascript["\']>', html
@@ -676,7 +679,7 @@ class TestReportGeneration:
         m.predict(14)
         m.anomalies()
         path = m.report(str(tmp_path / "report"))
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             html = f.read()
         chart_count = len(re.findall(r"Plotly\.newPlot", html))
         assert chart_count >= 5, f"Expected ≥5 charts, found {chart_count}"
@@ -685,7 +688,7 @@ class TestReportGeneration:
         m = quick_fit("01_retail_sales_daily.csv", "sales", "date")
         m.anomalies()
         path = m.report(str(tmp_path / "report"))
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             html = f.read()
         assert "BAX" in html or "behavioural" in html.lower()
 

@@ -48,9 +48,23 @@ class BAXNarrator:
         test_scores: dict,
         preprocessing_audit: dict,
         original_scores: Optional[dict] = None,
+        winner_row: Optional[dict] = None,
+        baseline_row: Optional[dict] = None,
     ) -> str:
+        baseline_line = self._baseline_comparison(
+            model_name, winner_row, baseline_row
+        )
+
+        if model_name == "SeasonalNaive":
+            return self._baseline_winner_narrative(
+                target_col, test_scores, original_scores
+            )
+
         if feature_importance is None or len(feature_importance) == 0:
-            return self._fallback_narrative(model_name, target_col, test_scores)
+            fallback = self._fallback_narrative(model_name, target_col, test_scores)
+            if baseline_line:
+                fallback += "\n\n" + baseline_line
+            return fallback
 
         top = feature_importance.head(10)
         total_importance = top.sum()
@@ -84,6 +98,9 @@ class BAXNarrator:
                 break
 
         lines.append("")
+        if baseline_line:
+            lines.append(baseline_line)
+            lines.append("")
         summary = self._preprocessing_summary(preprocessing_audit)
         if summary:
             lines.append(summary)
@@ -154,6 +171,58 @@ class BAXNarrator:
         if parts:
             return "Preprocessing applied: " + "; ".join(parts) + "."
         return ""
+
+    def _baseline_comparison(
+        self,
+        model_name: str,
+        winner_row: Optional[dict],
+        baseline_row: Optional[dict],
+    ) -> str:
+        """One-line honesty check: how much did ML beat seasonal-naive by?"""
+        if (
+            not winner_row or not baseline_row
+            or model_name == "SeasonalNaive"
+        ):
+            return ""
+        try:
+            winner_mae = float(winner_row.get("mae"))
+            baseline_mae = float(baseline_row.get("mae"))
+        except (TypeError, ValueError):
+            return ""
+        if not np.isfinite(winner_mae) or not np.isfinite(baseline_mae) or baseline_mae <= 0:
+            return ""
+        margin = round((baseline_mae - winner_mae) / baseline_mae * 100, 1)
+        if margin >= 1:
+            return (
+                f"Sanity check: {model_name} beats the seasonal-naive "
+                f"baseline by {margin}% (MAE {winner_mae} vs {baseline_mae})."
+            )
+        return (
+            f"Caution: {model_name} improves on the seasonal-naive baseline "
+            f"by only {margin}% (MAE {winner_mae} vs {baseline_mae}) — the "
+            "series is close to a seasonal random walk, so treat model "
+            "gains conservatively."
+        )
+
+    def _baseline_winner_narrative(
+        self,
+        target_col: str,
+        test_scores: dict,
+        original_scores: Optional[dict],
+    ) -> str:
+        scores = original_scores or test_scores or {}
+        return (
+            f"The seasonal-naive baseline — 'this period equals the same "
+            f"period one season ago' — outperformed every ML model for "
+            f"'{target_col}' (test MAE: {scores.get('mae', 'N/A')}, RMSE: "
+            f"{scores.get('rmse', 'N/A')}).\n\n"
+            "This usually means the series behaves like a seasonal random "
+            "walk: past seasonal values already carry most of the "
+            "predictable signal, and additional features add noise rather "
+            "than information. The baseline's forecast is used for "
+            "predictions. Consider adding informative exogenous columns "
+            "(promotions, weather, price) if you need to beat it."
+        )
 
     def _fallback_narrative(
         self, model_name: str, target_col: str, test_scores: dict

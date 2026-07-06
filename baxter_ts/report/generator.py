@@ -52,7 +52,7 @@ class ReportGenerator:
             import baxter_ts as _bt
             self.version = _bt.__version__
         except Exception:
-            self.version = "0.1.3"
+            self.version = "0.2.0"
 
     def generate(self, model: "BAXModel", output_path: str = "bax_report") -> str:
         from baxter_ts.visualization.plotter import BAXPlotter
@@ -79,10 +79,14 @@ class ReportGenerator:
         f_forecast = f_anomaly = f_shap = f_score = f_resid = f_decomp = None
 
         if model._y_test is not None and model._y_pred_test is not None:
+            y_disp, pred_disp = model._display_test_series()
             f_forecast = plotter.forecast_plot(
-                model._y_test, model._y_pred_test,
+                y_disp, pred_disp,
                 future_dates=model._future_dates,
                 future_pred=model._future_pred,
+                future_lower=getattr(model, "_future_lower", None),
+                future_upper=getattr(model, "_future_upper", None),
+                interval=getattr(model, "interval", 0.95),
                 target_col=model.target_col,
             )
         if model._anomaly_df is not None:

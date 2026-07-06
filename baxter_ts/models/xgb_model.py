@@ -5,6 +5,12 @@ from baxter_ts.models.base_model import BaseTimeSeriesModel
 
 
 class XGBModel(BaseTimeSeriesModel):
+    PARAM_GRID = {
+        "n_estimators": [200, 300, 500],
+        "learning_rate": [0.03, 0.05, 0.1],
+        "max_depth": [4, 6, 8],
+    }
+
     def __init__(self, n_estimators: int = 300, learning_rate: float = 0.05,
                  max_depth: int = 6, random_state: int = 42):
         super().__init__("XGBoost")

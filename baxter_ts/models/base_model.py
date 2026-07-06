@@ -1,21 +1,12 @@
 """
 Abstract base class for all baxter-ts models.
 
-Fix v0.1.3 — Production-grade MAPE and R² on original scale.
-
-Root cause of v0.1.2 bug:
-  inverse_transform_target() only undoes scaling (MinMax/Standard).
-  It does NOT undo differencing. So y_test_original after inverse scaling
-  still contained differenced values (daily changes, range ~0.03) not
-  original prices (range 70-300). MAPE(original_true, differenced_pred)
-  was always ~99% because the scales were completely different.
-
-Fix:
-  _original_scale_metrics() uses the std-ratio to convert scaled errors
-  back to original units. This works correctly even when differencing
-  was applied because the std ratio is preserved through linear transforms.
-  mae_original = mae_scaled * (std_original / std_scaled)
-  MAPE uses original mean as denominator — gives meaningful percentage.
+v0.2.0 — exact original-scale metrics.
+  Predictions are now fully inverse-transformed (unscale → un-difference →
+  expm1) by TargetInverter, so MAE/RMSE/MAPE/R² are computed directly on
+  original-unit values via _exact_original_metrics(). The v0.1.3 std-ratio
+  approximation (_original_scale_metrics) is kept only as a fallback for
+  the rare case where inversion is unavailable.
 """
 
 import numpy as np
@@ -33,6 +24,31 @@ def _safe_mape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return float(
         np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100
     )
+
+
+def _exact_original_metrics(
+    y_true_original: np.ndarray,
+    y_pred_original: np.ndarray,
+) -> Dict[str, float]:
+    """Standard metrics computed directly on original-unit values."""
+    mask = ~(np.isnan(y_true_original) | np.isnan(y_pred_original))
+    y_true = y_true_original[mask]
+    y_pred = y_pred_original[mask]
+    if len(y_true) == 0:
+        raise ValueError("No valid original-scale pairs to score.")
+
+    mae = mean_absolute_error(y_true, y_pred)
+    rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+    mape = _safe_mape(y_true, y_pred)
+    ss_res = np.sum((y_true - y_pred) ** 2)
+    ss_tot = np.sum((y_true - np.mean(y_true)) ** 2) + 1e-9
+    r2 = float(1 - ss_res / ss_tot)
+    return {
+        "mae": round(float(mae), 4),
+        "rmse": round(float(rmse), 4),
+        "mape": round(float(mape), 2) if not np.isnan(mape) else float("nan"),
+        "r2": round(r2, 4),
+    }
 
 
 def _original_scale_metrics(
@@ -87,6 +103,10 @@ def _original_scale_metrics(
 
 
 class BaseTimeSeriesModel(ABC):
+    # Search space for optional tuning (BAXModel(tune=True)).
+    # Keys must match __init__ keyword arguments of the subclass.
+    PARAM_GRID: Dict[str, list] = {}
+
     def __init__(self, name: str):
         self.name = name
         self._model = None
@@ -163,18 +183,28 @@ class BaseTimeSeriesModel(ABC):
             "r2":   round(r2,   4),
         }
 
-        # Original-scale metrics — used for display in report and narrative
+        # Original-scale metrics — used for display in report and narrative.
+        # Preferred path: exact metrics on fully inverse-transformed
+        # predictions. Fallback: v0.1.3 std-ratio approximation.
+        self.test_scores_original_ = {}
         if y_test_original is not None and len(y_test_original) == len(y_true):
-            try:
-                self.test_scores_original_ = _original_scale_metrics(
-                    y_true_scaled=y_true,
-                    y_pred_scaled=preds,
-                    y_true_original=y_test_original,
-                )
-            except Exception:
-                self.test_scores_original_ = {}
-        else:
-            self.test_scores_original_ = {}
+            if y_pred_original is not None and len(y_pred_original) == len(y_true):
+                try:
+                    self.test_scores_original_ = _exact_original_metrics(
+                        np.asarray(y_test_original, dtype=float),
+                        np.asarray(y_pred_original, dtype=float),
+                    )
+                except Exception:
+                    self.test_scores_original_ = {}
+            if not self.test_scores_original_:
+                try:
+                    self.test_scores_original_ = _original_scale_metrics(
+                        y_true_scaled=y_true,
+                        y_pred_scaled=preds,
+                        y_true_original=y_test_original,
+                    )
+                except Exception:
+                    self.test_scores_original_ = {}
 
         return self.test_scores_
 
